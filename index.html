@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dino Runner MVP</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1d2733;
+      --muted: #657484;
+      --sky: #eaf6ff;
+      --panel: rgba(255, 255, 255, 0.78);
+      --line: #bfd4e3;
+      --accent: #e67e46;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      overflow: hidden;
+      color: var(--ink);
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 16% 20%, rgba(255,255,255,.95) 0 2px, transparent 3px),
+        linear-gradient(145deg, #dff1ff 0%, #f9fcf5 54%, #ffe7c9 100%);
+    }
+
+    .game-shell {
+      width: min(100%, 1100px);
+      padding: clamp(16px, 3vw, 30px);
+      border: 1px solid rgba(255,255,255,.9);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: 0 22px 55px rgba(43, 71, 94, .16);
+      backdrop-filter: blur(10px);
+    }
+
+    .topbar {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.5rem, 3vw, 2.3rem);
+      letter-spacing: .02em;
+    }
+
+    .subtitle {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: .92rem;
+    }
+
+    .scores {
+      display: flex;
+      gap: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .score-box {
+      min-width: 105px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255,255,255,.7);
+      text-align: right;
+    }
+
+    .score-box span {
+      display: block;
+      color: var(--muted);
+      font-size: .7rem;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .score-box strong { font-size: 1.2rem; }
+
+    .canvas-wrap {
+      position: relative;
+      overflow: hidden;
+      border: 2px solid var(--ink);
+      border-radius: 12px;
+      background: var(--sky);
+      box-shadow: inset 0 -7px 0 rgba(255,255,255,.45);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      aspect-ratio: 16 / 7;
+    }
+
+    .message {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-content: center;
+      gap: 7px;
+      padding: 20px;
+      color: var(--ink);
+      text-align: center;
+      background: rgba(234, 246, 255, .72);
+    }
+
+    .message[hidden] { display: none; }
+    .message strong { font-size: clamp(1.8rem, 5vw, 3rem); }
+    .message span { color: var(--muted); font-size: .95rem; }
+
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: .86rem;
+    }
+
+    kbd {
+      padding: 3px 7px;
+      border: 1px solid #aebdca;
+      border-bottom-width: 2px;
+      border-radius: 5px;
+      color: var(--ink);
+      background: #fff;
+      font-family: inherit;
+      font-size: .8rem;
+    }
+
+    @media (max-width: 650px) {
+      body { padding: 10px; }
+      .topbar, .controls { align-items: flex-start; flex-direction: column; }
+      .scores { width: 100%; }
+      .score-box { flex: 1; text-align: left; }
+      canvas { aspect-ratio: 4 / 3; }
+    }
+  </style>
+</head>
+<body>
+  <main class="game-shell">
+    <header class="topbar">
+      <div>
+        <h1>Dino Runner</h1>
+        <p class="subtitle">穿越沙丘，盡可能跑得更遠。</p>
+      </div>
+      <div class="scores" aria-label="分數">
+        <div class="score-box"><span>Score</span><strong id="score">00000</strong></div>
+        <div class="score-box"><span>High Score</span><strong id="high-score">00000</strong></div>
+        <div class="score-box"><span>Coins</span><strong id="coins">000</strong></div>
+      </div>
+    </header>
+
+    <section class="canvas-wrap" aria-label="Dino Runner 遊戲畫布">
+      <canvas id="game" width="960" height="420"></canvas>
+      <div class="message" id="message" hidden>
+        <strong>Game Over</strong>
+        <span>按 <kbd>R</kbd> 鍵重來</span>
+      </div>
+    </section>
+
+    <footer class="controls">
+      <span>跳躍：<kbd>Space</kbd> / <kbd>ArrowUp</kbd>　蹲下：<kbd>ArrowDown</kbd></span>
+      <span>重新開始：<kbd>R</kbd></span>
+    </footer>
+  </main>
+
+  <script>
+    "use strict";
+
+    const canvas = document.getElementById("game");
+    const context = canvas.getContext("2d");
+    const scoreElement = document.getElementById("score");
+    const highScoreElement = document.getElementById("high-score");
+    const coinsElement = document.getElementById("coins");
+    const messageElement = document.getElementById("message");
+
+    const world = {
+      width: canvas.width,
+      height: canvas.height,
+      groundY: 340,
+      speed: 360,
+      gravity: 2200,
+      nextObstacleIn: 1.1,
+      nextCoinIn: 1.4,
+      nextPowerUpIn: 7,
+      elapsed: 0,
+      score: 0,
+      coins: 0,
+      highScore: Number(localStorage.getItem("dino-high-score") || 0),
+      running: true,
+      lastTime: 0
+    };
+
+    const player = {
+      x: 112,
+      y: world.groundY - 72,
+      width: 48,
+      height: 72,
+      velocityY: 0,
+      grounded: true,
+      crouching: false
+    };
+
+    const obstacles = [];
+    const coins = [];
+    const powerUps = [];
+    const clouds = [
+      { x: 180, y: 82, width: 82 },
+      { x: 605, y: 126, width: 60 },
+      { x: 830, y: 64, width: 92 }
+    ];
+
+    highScoreElement.textContent = formatScore(world.highScore);
+
+    function formatScore(value) {
+      return String(Math.floor(value)).padStart(5, "0");
+    }
+
+    function jump() {
+      if (!world.running) return;
+      if (player.grounded) {
+        player.crouching = false;
+        player.velocityY = -830;
+        player.grounded = false;
+      }
+    }
+
+    function setCrouching(isCrouching) {
+      if (!world.running || !player.grounded) return;
+      player.crouching = isCrouching;
+      player.height = isCrouching ? 48 : 72;
+      player.y = world.groundY - player.height;
+    }
+
+    function resetGame() {
+      const wasRunning = world.running;
+      obstacles.length = 0;
+      coins.length = 0;
+      powerUps.length = 0;
+      player.y = world.groundY - player.height;
+      player.velocityY = 0;
+      player.grounded = true;
+      player.crouching = false;
+      player.height = 72;
+      world.speed = 360;
+      world.nextObstacleIn = 1.1;
+      world.nextCoinIn = 1.4;
+      world.nextPowerUpIn = 7;
+      world.elapsed = 0;
+      world.score = 0;
+      world.coins = 0;
+      coinsElement.textContent = "000";
+      world.running = true;
+      world.lastTime = performance.now();
+      messageElement.hidden = true;
+      if (!wasRunning) requestAnimationFrame(gameLoop);
+    }
+
+    function spawnObstacle() {
+      const bird = Math.random() > .78;
+      const tall = Math.random() > .45;
+      const height = bird ? 28 : (tall ? 68 : 48);
+      const width = bird ? 48 : (tall ? 28 : 38);
+      obstacles.push({
+        x: world.width + 20,
+        y: bird ? world.groundY - 92 : world.groundY - height,
+        width,
+        height,
+        kind: bird ? "bird" : (tall ? "cactus" : "rock")
+      });
+      world.nextObstacleIn = 0.8 + Math.random() * 1.25;
+    }
+
+    function spawnCoin() {
+      coins.push({
+        x: world.width + 20,
+        y: world.groundY - 58 - Math.random() * 92,
+        radius: 10
+      });
+      world.nextCoinIn = 1.1 + Math.random() * 1.7;
+    }
+
+    function spawnPowerUp() {
+      powerUps.push({ x: world.width + 20, y: world.groundY - 112, size: 24, kind: "shield" });
+      world.nextPowerUpIn = 9 + Math.random() * 7;
+    }
+
+    function overlaps(first, second) {
+      const padding = 7;
+      return first.x + padding < second.x + second.width
+        && first.x + first.width - padding > second.x
+        && first.y + padding < second.y + second.height
+        && first.y + first.height - padding > second.y;
+    }
+
+    function update(delta) {
+      world.elapsed += delta;
+      world.score = world.elapsed * 10;
+      world.speed = Math.min(620, 360 + world.elapsed * 6);
+      scoreElement.textContent = formatScore(world.score);
+
+      player.velocityY += world.gravity * delta;
+      player.y += player.velocityY * delta;
+      if (player.y + player.height >= world.groundY) {
+        player.y = world.groundY - player.height;
+        player.velocityY = 0;
+        player.grounded = true;
+      }
+
+      world.nextObstacleIn -= delta;
+      if (world.nextObstacleIn <= 0) spawnObstacle();
+      world.nextCoinIn -= delta;
+      if (world.nextCoinIn <= 0) spawnCoin();
+      world.nextPowerUpIn -= delta;
+      if (world.nextPowerUpIn <= 0) spawnPowerUp();
+
+      obstacles.forEach(obstacle => { obstacle.x -= world.speed * delta; });
+      coins.forEach(coin => { coin.x -= world.speed * delta; });
+      powerUps.forEach(powerUp => { powerUp.x -= world.speed * delta; });
+      while (obstacles.length && obstacles[0].x + obstacles[0].width < 0) obstacles.shift();
+      while (coins.length && coins[0].x + coins[0].radius < 0) coins.shift();
+      while (powerUps.length && powerUps[0].x + powerUps[0].size < 0) powerUps.shift();
+
+      for (let index = coins.length - 1; index >= 0; index -= 1) {
+        const coin = coins[index];
+        if (overlaps(player, { x: coin.x - coin.radius, y: coin.y - coin.radius, width: coin.radius * 2, height: coin.radius * 2 })) {
+          coins.splice(index, 1);
+          world.coins += 1;
+          world.score += 25;
+          coinsElement.textContent = String(world.coins).padStart(3, "0");
+        }
+      }
+
+      for (let index = powerUps.length - 1; index >= 0; index -= 1) {
+        const powerUp = powerUps[index];
+        if (overlaps(player, powerUp)) {
+          powerUps.splice(index, 1);
+          player.shielded = true;
+        }
+      }
+
+      for (const obstacle of obstacles) {
+        if (overlaps(player, obstacle)) {
+          if (player.shielded) {
+            player.shielded = false;
+            obstacle.x = -obstacle.width - 1;
+          } else {
+            endGame();
+          }
+        }
+      }
+
+      clouds.forEach(cloud => {
+        cloud.x -= world.speed * .08 * delta;
+        if (cloud.x + cloud.width < 0) cloud.x = world.width + 30;
+      });
+    }
+
+    function endGame() {
+      world.running = false;
+      world.highScore = Math.max(world.highScore, Math.floor(world.score));
+      localStorage.setItem("dino-high-score", world.highScore);
+      highScoreElement.textContent = formatScore(world.highScore);
+      messageElement.hidden = false;
+    }
+
+    function drawCloud(cloud) {
+      context.fillStyle = "rgba(255, 255, 255, .78)";
+      context.beginPath();
+      context.arc(cloud.x + 18, cloud.y + 13, 13, 0, Math.PI * 2);
+      context.arc(cloud.x + 38, cloud.y + 8, 19, 0, Math.PI * 2);
+      context.arc(cloud.x + 61, cloud.y + 14, 13, 0, Math.PI * 2);
+      context.fill();
+      context.fillRect(cloud.x + 17, cloud.y + 13, 46, 14);
+    }
+
+    function drawPlayer() {
+      context.fillStyle = "#263746";
+      if (player.crouching) {
+        context.fillRect(player.x + 5, player.y + 17, 39, 27);
+        context.fillRect(player.x + 34, player.y + 7, 22, 24);
+        context.fillRect(player.x + 48, player.y + 14, 12, 7);
+        context.fillRect(player.x + 15, player.y + 41, 10, 8);
+        context.fillRect(player.x + 35, player.y + 41, 10, 8);
+      } else {
+        context.fillRect(player.x + 9, player.y + 18, 30, 47);
+        context.fillRect(player.x + 30, player.y + 4, 23, 31);
+        context.fillRect(player.x + 44, player.y + 12, 13, 7);
+        context.fillRect(player.x + 1, player.y + 31, 13, 9);
+        context.fillRect(player.x + 15, player.y + 61, 8, 11);
+        context.fillRect(player.x + 34, player.y + 61, 8, 11);
+      }
+      context.fillStyle = "#f9fcf5";
+      context.fillRect(player.x + 43, player.y + (player.crouching ? 13 : 10), 5, 5);
+      if (player.shielded) {
+        context.strokeStyle = "#3d9cc2";
+        context.lineWidth = 3;
+        context.beginPath();
+        context.arc(player.x + 27, player.y + player.height / 2, 35, 0, Math.PI * 2);
+        context.stroke();
+      }
+    }
+
+    function drawObstacle(obstacle) {
+      context.fillStyle = obstacle.kind === "rock" ? "#c06b48" : "#4d856c";
+      if (obstacle.kind === "bird") {
+        context.fillStyle = "#755c9b";
+        context.fillRect(obstacle.x + 12, obstacle.y + 8, 25, 13);
+        context.fillRect(obstacle.x + 3, obstacle.y + 2, 15, 8);
+        context.fillRect(obstacle.x + 29, obstacle.y + 1, 15, 8);
+        context.fillRect(obstacle.x + 36, obstacle.y + 10, 12, 5);
+        return;
+      }
+      if (obstacle.kind === "rock") {
+        context.beginPath();
+        context.moveTo(obstacle.x, obstacle.y + obstacle.height);
+        context.lineTo(obstacle.x + 7, obstacle.y + 12);
+        context.lineTo(obstacle.x + obstacle.width - 5, obstacle.y);
+        context.lineTo(obstacle.x + obstacle.width, obstacle.y + obstacle.height);
+        context.closePath();
+        context.fill();
+      } else {
+        context.fillRect(obstacle.x + 8, obstacle.y, obstacle.width - 16, obstacle.height);
+        context.fillRect(obstacle.x, obstacle.y + 22, 14, 9);
+        context.fillRect(obstacle.x + obstacle.width - 8, obstacle.y + 35, 8, 9);
+      }
+    }
+
+    function drawCoin(coin) {
+      context.fillStyle = "#f2b83f";
+      context.beginPath();
+      context.arc(coin.x, coin.y, coin.radius, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#fff1a8";
+      context.beginPath();
+      context.arc(coin.x - 3, coin.y - 3, 3, 0, Math.PI * 2);
+      context.fill();
+    }
+
+    function drawPowerUp(powerUp) {
+      context.fillStyle = "#3d9cc2";
+      context.beginPath();
+      context.moveTo(powerUp.x + powerUp.size / 2, powerUp.y);
+      context.lineTo(powerUp.x + powerUp.size, powerUp.y + 7);
+      context.lineTo(powerUp.x + powerUp.size - 4, powerUp.y + 20);
+      context.lineTo(powerUp.x + powerUp.size / 2, powerUp.y + powerUp.size);
+      context.lineTo(powerUp.x + 4, powerUp.y + 20);
+      context.lineTo(powerUp.x, powerUp.y + 7);
+      context.closePath();
+      context.fill();
+      context.fillStyle = "#eaf6ff";
+      context.fillRect(powerUp.x + 10, powerUp.y + 6, 4, 12);
+      context.fillRect(powerUp.x + 6, powerUp.y + 10, 12, 4);
+    }
+
+    function draw() {
+      context.clearRect(0, 0, world.width, world.height);
+      context.fillStyle = "#eaf6ff";
+      context.fillRect(0, 0, world.width, world.height);
+      clouds.forEach(drawCloud);
+
+      context.fillStyle = "#f5d8a8";
+      context.fillRect(0, world.groundY, world.width, world.height - world.groundY);
+      context.fillStyle = "#263746";
+      context.fillRect(0, world.groundY, world.width, 4);
+      context.strokeStyle = "rgba(38, 55, 70, .2)";
+      context.lineWidth = 2;
+      for (let x = -((world.elapsed * world.speed) % 48); x < world.width; x += 48) {
+        context.beginPath();
+        context.moveTo(x, world.groundY + 28);
+        context.lineTo(x + 25, world.groundY + 28);
+        context.stroke();
+      }
+
+      drawPlayer();
+      obstacles.forEach(drawObstacle);
+      coins.forEach(drawCoin);
+      powerUps.forEach(drawPowerUp);
+    }
+
+    function gameLoop(timestamp) {
+      if (!world.running) {
+        draw();
+        return;
+      }
+      const delta = Math.min((timestamp - world.lastTime) / 1000, .05);
+      world.lastTime = timestamp;
+      update(delta);
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    document.addEventListener("keydown", event => {
+      if (event.code === "Space" || event.code === "ArrowUp") {
+        event.preventDefault();
+        jump();
+      }
+      if (event.code === "ArrowDown") {
+        event.preventDefault();
+        setCrouching(true);
+      }
+      if (event.key.toLowerCase() === "r") resetGame();
+    });
+
+    document.addEventListener("keyup", event => {
+      if (event.code === "ArrowDown") setCrouching(false);
+    });
+
+    canvas.addEventListener("pointerdown", jump);
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>
