@@ -184,6 +184,9 @@
     const highScoreElement = document.getElementById("high-score");
     const coinsElement = document.getElementById("coins");
     const messageElement = document.getElementById("message");
+    const dodgeFrames = [];
+    const spriteWidth = 64;
+    const spriteHeight = 72;
 
     const world = {
       width: canvas.width,
@@ -209,7 +212,9 @@
       height: 72,
       velocityY: 0,
       grounded: true,
-      crouching: false
+      crouching: false,
+      animationFrame: 0,
+      animationElapsed: 0
     };
 
     const obstacles = [];
@@ -222,6 +227,49 @@
     ];
 
     highScoreElement.textContent = formatScore(world.highScore);
+
+    async function loadDodgeAnimation() {
+      if (typeof ImageDecoder !== "function") {
+        throw new Error("This browser does not support animated GIF decoding.");
+      }
+      const response = await fetch("./閃身步.gif");
+      if (!response.ok) throw new Error(`GIF request failed with status ${response.status}.`);
+      const decoder = new ImageDecoder({ data: await response.arrayBuffer(), type: "image/gif" });
+      try {
+        await decoder.tracks.ready;
+        const track = decoder.tracks.selectedTrack;
+        if (!track || track.frameCount < 1) throw new Error("The GIF contains no animation frames.");
+
+        for (let index = 0; index < track.frameCount; index += 1) {
+          const { image } = await decoder.decode({ frameIndex: index });
+          const duration = Math.max(20, (image.duration || 70000) / 1000);
+          const frameCanvas = document.createElement("canvas");
+          frameCanvas.width = spriteWidth;
+          frameCanvas.height = spriteHeight;
+          const frameContext = frameCanvas.getContext("2d", { willReadFrequently: true });
+          frameContext.drawImage(image, 190, 18, 320, 300, 0, 0, spriteWidth, spriteHeight);
+          image.close();
+
+          const frame = frameContext.getImageData(0, 0, spriteWidth, spriteHeight);
+          for (let pixel = 0; pixel < frame.data.length; pixel += 4) {
+            const red = frame.data[pixel];
+            const green = frame.data[pixel + 1];
+            const blue = frame.data[pixel + 2];
+            if (blue > 75 && blue > red * 1.08 && blue > green * 1.02 && blue - red > 12) {
+              frame.data[pixel + 3] = 0;
+            }
+          }
+          frameContext.putImageData(frame, 0, 0);
+          dodgeFrames.push({ canvas: frameCanvas, duration });
+        }
+      } finally {
+        decoder.close();
+      }
+    }
+
+    loadDodgeAnimation().catch(error => {
+      console.error("無法載入閃身步 GIF 動畫：", error);
+    });
 
     function formatScore(value) {
       return String(Math.floor(value)).padStart(5, "0");
@@ -306,6 +354,13 @@
 
     function update(delta) {
       world.elapsed += delta;
+      if (dodgeFrames.length) {
+        player.animationElapsed += delta * 1000;
+        while (player.animationElapsed >= dodgeFrames[player.animationFrame].duration) {
+          player.animationElapsed -= dodgeFrames[player.animationFrame].duration;
+          player.animationFrame = (player.animationFrame + 1) % dodgeFrames.length;
+        }
+      }
       world.score = world.elapsed * 10;
       world.speed = Math.min(620, 360 + world.elapsed * 6);
       scoreElement.textContent = formatScore(world.score);
@@ -386,6 +441,21 @@
     }
 
     function drawPlayer() {
+      if (dodgeFrames.length) {
+        const frame = dodgeFrames[player.animationFrame].canvas;
+        context.imageSmoothingEnabled = false;
+        context.drawImage(frame, player.x - 8, player.y, spriteWidth, player.height);
+        context.imageSmoothingEnabled = true;
+        if (player.shielded) {
+          context.strokeStyle = "#3d9cc2";
+          context.lineWidth = 3;
+          context.beginPath();
+          context.arc(player.x + 27, player.y + player.height / 2, 35, 0, Math.PI * 2);
+          context.stroke();
+        }
+        return;
+      }
+
       context.fillStyle = "#263746";
       if (player.crouching) {
         context.fillRect(player.x + 5, player.y + 17, 39, 27);
